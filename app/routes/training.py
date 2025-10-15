@@ -64,7 +64,12 @@ def get_dataset_stats() -> dict:
     # Basic stats
     total_messages = messages_collection().count_documents({})
     total_threads = threads_collection().count_documents({})
-    embedded_messages = messages_collection().count_documents({"embedding": {"$ne": None}})
+    # Count messages that have embeddings (MongoDB queries aren't working properly, so count manually)
+    embedded_messages = 0
+    for doc in messages_collection().find({}, {"embedding": 1}):
+        embedding = doc.get("embedding")
+        if embedding and isinstance(embedding, list) and len(embedding) > 0:
+            embedded_messages += 1
     
     # Role distribution
     agent_messages = messages_collection().count_documents({"role": "agent"})

@@ -27,12 +27,20 @@ class GraphState(TypedDict, total=False):
 class AgentGraph:
     def __init__(self) -> None:
         self.rag = RAGService()
-        self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.4)
-
+        
         settings = get_settings()
         self.mode = settings.agent_mode
+        
+        # Initialize LLM with API key if available
+        if settings.openai_api_key:
+            self.llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.4, api_key=settings.openai_api_key)
+        else:
+            # Fallback LLM service for testing
+            from .llm import LLMService
+            self.llm_service = LLMService()
+            self.llm = None
 
-        if self.mode == "react":
+        if self.mode == "react" and self.llm:
             # Prebuilt ReAct agent with minimal tools (RAG retrieval tool)
             def retrieve_tool(query: str) -> str:  # simple tool signature
                 docs = self.rag.retrieve(query, top_k=6)
@@ -51,6 +59,9 @@ class AgentGraph:
             graph.add_node("classify_stage", self._classify_stage)
             graph.add_node("retrieve", self._retrieve)
             graph.add_node("respond", self._respond)
+            
+            # Add entrypoint from START to first node
+            graph.add_edge("__start__", "classify_stage")
             graph.add_edge("classify_stage", "retrieve")
             graph.add_edge("retrieve", "respond")
             graph.add_edge("respond", END)
@@ -96,8 +107,30 @@ class AgentGraph:
                 messages.append({"role": m["role"], "content": m.get("content") or ""})
         messages.append({"role": "user", "content": user_utterance})
 
-        resp = self.llm.invoke(messages)
-        reply = getattr(resp, "content", "")
+        if self.llm:
+            resp = self.llm.invoke(messages)
+            reply = getattr(resp, "content", "")
+        else:
+            # Use fallback LLM service
+            user_content = messages[-1]["content"] if messages else ""
+            context_content = ""
+            for msg in messages[:-1]:
+                if msg["role"] == "system" and "Context:" in msg["content"]:
+                    context_content = msg["content"]
+            reply = self.llm_service.generate(user_content, context_content)
+
+        # Parse JSON response to extract the actual message
+        try:
+            import json
+            if reply.strip().startswith('{'):
+                parsed_reply = json.loads(reply)
+                # Extract the actual message from the JSON structure
+                actual_message = parsed_reply.get('outgoing_message', reply)
+                # Store the full JSON for debugging but use the clean message
+                reply = actual_message
+        except (json.JSONDecodeError, AttributeError):
+            # If it's not valid JSON, use the reply as-is
+            pass
 
         # naive action suggestion
         suggested_action = None
@@ -114,7 +147,7 @@ class AgentGraph:
     def run(self, state: GraphState, user_utterance: str) -> GraphState:
         config = {"configurable": {"thread_id": state.get("thread_id") or "default"}}
         inputs = {**state, "user_utterance": user_utterance}
-        if self.mode == "react":
+        if self.mode == "react" and self.llm:
             # Use messages state expected by prebuilt agent
             messages = []
             for m in state.get("chat_history") or []:
