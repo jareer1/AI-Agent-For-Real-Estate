@@ -144,6 +144,8 @@ def ingest_csv(file_bytes: bytes, source_file: str) -> dict:
     turn_index = 0
     empty_row_streak = 0
     auto_thread_counter = 0
+    # Maintain rolling context per thread (role-labeled clean_text)
+    context_buffers: dict[str, list[str]] = {}
 
     for row in reader:
         # Clean the row to remove None keys (MongoDB doesn't allow None keys)
@@ -187,6 +189,13 @@ def ingest_csv(file_bytes: bytes, source_file: str) -> dict:
         stage = _infer_stage(norm_text)
         entities = _extract_entities(norm_text)
 
+        # Build context window (last N prior turns within thread)
+        ctx_buf = context_buffers.get(thread_id) or []
+        window = 8
+        prior_ctx = ctx_buf[-window:]
+        labeled = f"{role}:{norm_text}" if role in (Role.agent.value, Role.lead.value) else norm_text
+        context_text = (" | ".join(prior_ctx + [labeled])).strip()
+
         msg_doc = {
             "thread_id": thread_id,
             "turn_index": turn_index,
@@ -197,13 +206,20 @@ def ingest_csv(file_bytes: bytes, source_file: str) -> dict:
             "stage": stage.value,
             "entities": entities,
             "embedding": None,
+            "context_text": context_text,
             "embedding_model": None,
             "embedding_version": None,
             "source": "csv",
+            "source_file": source_file,
             "pii_hashes": pii,
         }
         messages.append(msg_doc)
         turn_index += 1
+
+        # Update context buffer with labeled line
+        if thread_id:
+            buf = context_buffers.setdefault(thread_id, [])
+            buf.append(labeled)
 
     # Derive threads summary with better context
     by_thread: dict[str, list[dict[str, Any]]] = {}

@@ -17,17 +17,22 @@ class Trainer:
         """Train the RAG system by ensuring all messages have embeddings"""
         from ..db.mongo import messages_collection
         
-        # Get messages without embeddings
-        messages_to_embed = list(messages_collection().find(
-            {"embedding": None}, 
-            {"_id": 1, "clean_text": 1}
-        ).limit(1000))
+        # Get messages without embeddings; use context_text if present, else clean_text
+        cursor = messages_collection().find(
+            {"embedding": None}, {"_id": 1, "context_text": 1, "clean_text": 1}
+        ).limit(5000)
+        messages_to_embed = list(cursor)
         
         if not messages_to_embed:
             return {"status": "completed", "message": "All messages already have embeddings"}
         
         # Generate embeddings - filter out empty texts
-        pairs = [(doc["_id"], doc.get("clean_text") or "") for doc in messages_to_embed if doc.get("clean_text") and doc.get("clean_text").strip()]
+        # Prefer context_text when available
+        pairs: list[tuple[Any, str]] = []
+        for doc in messages_to_embed:
+            text = (doc.get("context_text") or doc.get("clean_text") or "").strip()
+            if text:
+                pairs.append((doc["_id"], text))
         embedded_count = self.embeddings_service.embed_and_update_messages(pairs, version="v1")
         
         return {

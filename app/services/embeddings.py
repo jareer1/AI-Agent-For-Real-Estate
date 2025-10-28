@@ -45,4 +45,23 @@ class EmbeddingsService:
             )
         return len(vectors)
 
+    def embed_and_update_messages_field(self, message_ids_and_texts: list[tuple[Any, str]], field: str, version: str = "v1") -> int:
+        if not message_ids_and_texts:
+            return 0
+        valid_pairs = [(mid, text) for mid, text in message_ids_and_texts if text and text.strip()]
+        if not valid_pairs:
+            return 0
+        texts = [t for _, t in valid_pairs]
+        vectors = self.embed_texts(texts)
+        if not vectors:
+            return 0
+        from ..db.mongo import messages_collection
+        set_field = f"{field}"
+        for (mid, _), vec in zip(valid_pairs, vectors):
+            messages_collection().update_one(
+                {"_id": mid},
+                {"$set": {set_field: vec, "embedding_model": self.model, "embedding_version": version}},
+            )
+        return len(vectors)
+
 
