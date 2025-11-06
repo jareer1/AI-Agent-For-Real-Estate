@@ -1,0 +1,54 @@
+id,thread_id,turn_id,lead,target_agent,prediction,escalation,should_send_message,cosine,rougeL,action_match,entity,style,total
+1a267395ab355bde,0,0,"Okay, Thank you!","…And thank you! 
+
+Hey, good morning! How did you make out? Did you go ahead and apply or still weighing options?",Of course! How many bedrooms are you aiming for? I’ll start pulling matches once I have that.,False,True,0.11764705882352941,0.10256410256410256,0.0,0.0,0.7142857142857143,0.16370394311570782
+b01e1de79e6f71c0,0,1,"Good morning! I believe thats the one I’m going to go with. If I was to apply today, that means the apartment’s quote could have changed? Also, is it a chance I could get a different apartment than the one she mention in the tour?",The quote was for 48 hours of our tour so literally about now. The page to apply on the website seems to be down so I think you should call and tell them you’re trying to apply within your 48 hour window and it’s not letting you. You can choose any unit you want,"Quotes are typically valid for 48 hours from the tour, so it may have shifted. I’ll confirm today’s quote and check if a comparable unit is open—are you set on a 1 or 2 bedroom?",False,True,0.35176323534072423,0.19148936170212766,1.0,0.0,1.0,0.5018405366245726
+b9bfbee17120e37b,0,2,"Okay, cool beans. No answer surprisingly. 
+ 
+ Harlow’s rate is still the same?","Price is actually still the same for Pearl. Cheaper if you want to set move date for the next two weeks. You have a 4 units to choose from. 
+ 
+ Harlow went up actually. $1308 is the lowest price. Available now 
+
+Good morning! Are you all set with your application to Pearl? I’ve been checking in with Harlow and still no price drop yet",,True,False,0.0,0.0,0.0,0.0,0.7142857142857143,0.10714285714285714
+d701c648d1e2c74f,0,3,Hey Ashanti! Thank you! And I got cold feet. 😮‍💨I’m going to think on it for a day or two.,Okay! Don’t feel pressure. Make it feel right! I’ll run another search tomorrow to see if there are other options that might work better,Totally understandable—no rush. I’ll take another pass and send a few fresh options to compare.,True,True,0.24253562503633297,0.186046511627907,1.0,0.0,0.7142857142857143,0.41993730264975976
+94267d0df821cb13,0,4,Thanks so much!,"Of course! 
+
+Good Morning! ☀️Here’s a few more to look at. District and The Peri would be a similar distance from work as Pearl Woodlake and Smart Living Heights is inside the loop! Let me know if you’d like to see either of them
+ 
+ District at Memorial
+ Studio | $1097 | 572 sqft
+ 1/1 | $1189 | 695 sqft
+ 
+ The Peri on Westheimer
+ 1/1 | $1114 | 712 sqft 
+ 
+ Smart Living Heights
+ 1/1 | $1230 | 631 sqft 
+
+Hey Jyesha, checking on your search. Do you still need more options to look at?",You're welcome!,False,True,0.07216878364870323,0.021505376344086023,0.0,0.0,0.7142857142857143,0.13562773787151616
+f61ae19877877a99,0,5,"Hey Ashanti, and I like District at Memorial. I would like to see that one.","Good morning, sorry for the late reply. When would you like to see District at Memorial?",Great pick! I’ll check availability with District at Memorial and follow up with tour times.,True,True,0.19364916731037085,0.1875,0.0,0.0,0.7142857142857143,0.20304506570148692
+2350eae3e7a205f0,0,6,"Good morning! No worries, Friday is great.","Okay, I requested a tour online. They didn’t specify date so should be reaching out to you.",Perfect—I'll check Friday availability at District at Memorial and follow up with times. Any time window that works best?,True,True,0.05270462766947299,0.05128205128205128,0.0,0.0,0.8571428571428571,0.1547103559480518
+adbd4e096a3853cc,0,7,Thank you!,"You’re welcome! 
+
+Hey Jyesha, try looking into Broadstone Energy Park if you haven’t signed yet. Really great rates right now under $1100 
+
+A little further west though",You're welcome! I’ll follow up with District at Memorial and confirm tour times.,False,True,0.14638501094227999,0.13636363636363635,0.0,0.0,0.8571428571428571,0.200260727855772
+1de7d9fad41f4f1f,0,8,I haven’t. Thank you !,"You’re welcome! Let me know if you decide to see them, these I’m required to be there for credit","Great, I’ll confirm District at Memorial tour times and follow up.",True,True,0.06622661785325219,0.060606060606060615,0.0,0.0,0.8571428571428571,0.1608416539109759
+d1dfadfa80335d2b,0,9,Sure thing!,"Hey Jyesha! Harlow has a 1 bedroom for $1144 available 12/17. Their A1 floorplan 
+
+Good morning*",Perfect. I’ll confirm Friday at District and circle back with times. Are you after a studio or 1-bed?,True,True,0.10846522890932808,0.1081081081081081,0.0,0.0,0.7142857142857143,0.16132190347733816
+d8bf79e827cc2ab3,0,10,"Okay, Great! I’m going to feel out the app ASAP","Sounds perfect 👍🏼 
+
+Good morning! Noticed the unit isn’t there anymore. Hoping that was you who applied!",Perfect—add me (Ashanti with AptAmigo) in the referral section when you apply. Shoot me a quick note once it’s submitted and I’ll track updates.,False,True,0.14269544824634822,0.13636363636363638,0.0,0.0,0.7142857142857143,0.17754080948362447
+792a1febf9aa7c6a,0,11,Good Morning and It was! I hoped on it real fast. Lol,"Lol perfect! 🙌🏼 
+
+Please keep me in the loop once they get back to you about approval",Love it—nice snag. I’ll confirm with the office and circle back with an update.,False,True,0.12909944487358055,0.125,1.0,0.0,0.8571428571428571,0.3925062342771818
+68cd5b901e17da23,0,12,"Definitely will, Thank you!",Thanks! Pleasure is mine!,You're welcome! I’ll keep an eye out and follow up if I don’t hear anything.,False,True,0.0,0.0,0.0,0.0,0.8571428571428571,0.09777142857142856
+1479fd3e6d5921d7,0,13,"Good morning, I’m still in the process. 
+ 
+ How does the renter’s verification work? Is it requires that they speak with a former landlord?","Okay, thanks for the update. 
+ 
+ Many times it’s a 3rd party to screen and see if you’ve ever had any broken leases or missed or late payments. It’s possible they call and verify rental history themselves though","They typically verify rental history by contacting your current or previous landlord (or a third-party), and if they can’t reach them, most will accept a copy of your lease plus a payment ledger or portal screenshots. I’ll confirm this building’s exact backup options and follow up.",True,True,0.2541642838876745,0.15555555555555556,0.0,0.0,1.0,0.26229083269401937
+bce20f0d15589cad,0,14,"Hey Ashanti, my application has been approved. I’m about to move forward with signing the lease.","Awesome!! Congratulations!!🍾 That sounds perfect 👍
+ 
+ Can you ask them for the form for you to fill out for the locator referral please",Awesome news—congrats on the approval! Can you ask them for the form for you to fill out for the locator referral please.,True,True,0.7777777777777778,0.8,1.0,0.0,0.8571428571428571,0.7207936507936508

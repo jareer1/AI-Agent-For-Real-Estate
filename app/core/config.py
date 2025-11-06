@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     composio_api_key: str | None = None
     openai_api_key: str | None = None
 
+    # LLM behavior flags
+    enforce_json_mode: bool = True
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

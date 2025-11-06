@@ -34,12 +34,28 @@ def raw_messages_collection() -> Collection:
     return get_db()["raw_messages"]
 
 
+def escalations_collection() -> Collection:
+    """Collection for tracking escalations to humans."""
+    return get_db()["escalations"]
+
+
 def ensure_indexes() -> None:
     msgs = messages_collection()
     thrs = threads_collection()
+    escs = escalations_collection()
+    
+    # Messages indexes
     msgs.create_index([("thread_id", 1), ("turn_index", 1)])
     msgs.create_index([("stage", 1), ("timestamp", -1)])
     msgs.create_index([("role", 1)])
+    
+    # Threads indexes
     thrs.create_index([("thread_id", 1)], unique=True)
+    
+    # Escalations indexes
+    escs.create_index([("thread_id", 1), ("timestamp", -1)])
+    escs.create_index([("escalation_type", 1)])
+    escs.create_index([("resolved", 1), ("timestamp", -1)])
+    escs.create_index([("timestamp", -1)])
 
 

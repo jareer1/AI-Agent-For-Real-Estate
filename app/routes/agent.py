@@ -1,127 +1,374 @@
+"""Agent API routes - Clean, production-ready endpoints.
+
+This module provides the main API endpoints for the AI agent:
+- /webhook/zapier/message: Main webhook for Zapier integration
+- /agent/start: Initialize a new conversation
+- /agent/reply: Generate a reply in an ongoing conversation
+- /agent/action: Execute an action (email, SMS, etc.)
+
+All business logic is handled through LLM prompts rather than hardcoded rules.
+"""
+
 from fastapi import APIRouter, Depends
+from datetime import datetime
 
 from ..core.security import require_api_key
 from ..services.agent_orchestrator import AgentOrchestrator, AgentState
-from ..db.mongo import messages_collection
-from ..services.actions import should_change_stage
+from ..db.mongo import messages_collection, escalations_collection
+from ..services.actions import (
+    should_change_stage,
+    is_escalation_action,
+    determine_should_send,
+    default_reply_for_action,
+)
+from ..services.escalation_rules import detect_escalation_from_rules
 from integrations.composio_client import ComposioClient
 from ..services.embeddings import EmbeddingsService
 
 
-agent_router = APIRouter(prefix="/agent", tags=["agent"], dependencies=[Depends(require_api_key)])
-# Unauthenticated webhook for Zapier (they can pass API key if desired)
-webhook_router = APIRouter(prefix="/webhook", tags=["webhook"])
+# API routers
+agent_router = APIRouter(
+    prefix="/agent",
+    tags=["agent"],
+    dependencies=[Depends(require_api_key)]
+)
+
+webhook_router = APIRouter(
+    prefix="/webhook",
+    tags=["webhook"]
+)
 
 
-def _build_chat_history(thread_id: str | None, payload_history: list[dict[str, str]] | None) -> list[dict[str, str]]:
-    """Prefer provided chat history; fallback to DB by thread.
-
-    Returns list of {role:"user"|"assistant", content:str}
+def _build_chat_history(
+    thread_id: str | None,
+    payload_history: list[dict[str, str]] | None
+) -> list[dict[str, str]]:
+    """Build chat history from payload or database.
+    
+    Prefers provided chat_history in payload, falls back to DB lookup by thread_id.
+    
+    Args:
+        thread_id: Conversation thread identifier
+        payload_history: Chat history from request payload
+    
+    Returns:
+        List of messages with role (user/assistant) and content
     """
-    history = payload_history or []
-    if history:
-        return history[-20:]
+    # Use provided history if available
+    if payload_history:
+        return payload_history[-20:]
+    
+    # Fall back to DB lookup
     if not thread_id:
         return []
+    
     try:
-        cur = (
+        cursor = (
             messages_collection()
-            .find({"thread_id": thread_id, "clean_text": {"$exists": True, "$ne": ""}}, {"role": 1, "clean_text": 1})
+            .find(
+                {"thread_id": thread_id, "clean_text": {"$exists": True, "$ne": ""}},
+                {"role": 1, "clean_text": 1}
+            )
             .sort("turn_index", 1)
             .limit(40)
         )
+        
         mapped: list[dict[str, str]] = []
-        for d in cur:
-            role = (d.get("role") or "").lower()
-            content = d.get("clean_text") or ""
+        for doc in cursor:
+            role = (doc.get("role") or "").lower()
+            content = doc.get("clean_text") or ""
+            
             if not content:
                 continue
+            
             if role == "lead":
                 mapped.append({"role": "user", "content": content})
             elif role == "agent":
                 mapped.append({"role": "assistant", "content": content})
+        
         return mapped[-20:]
+    
     except Exception:
         return []
 
 
+def _log_escalation(
+    thread_id: str | None,
+    escalation_type: str,
+    escalation_reason: str,
+    lead_message: str,
+    ai_response: str,
+    stage: str,
+) -> None:
+    """Log an escalation to MongoDB for human review queue.
+    
+    Args:
+        thread_id: Conversation thread ID
+        escalation_type: Type of escalation (fees, links, scheduling, etc.)
+        escalation_reason: Brief description of why escalating
+        lead_message: The lead's message that triggered escalation
+        ai_response: The AI's response (may be empty for no-send cases)
+        stage: Current conversation stage
+    """
+    if not thread_id or not escalation_type:
+        return
+    
+    try:
+        escalations_collection().insert_one({
+            "thread_id": thread_id,
+            "escalation_type": escalation_type,
+            "escalation_reason": escalation_reason or "No reason provided",
+            "lead_message_snippet": lead_message[:500] if lead_message else "",
+            "ai_response": ai_response[:500] if ai_response else "",
+            "timestamp": datetime.utcnow(),
+            "stage": stage or "unknown",
+            "resolved": False,
+            "resolution_notes": None,
+            "resolved_at": None,
+            "resolved_by": None,
+        })
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to log escalation: {e}")
+
+
 @webhook_router.post("/zapier/message")
 def zapier_message(payload: dict) -> dict:
-    # Expecting: {thread_id, chat_history: [...], text, lead_profile}
+    """Main webhook endpoint for Zapier integration.
+    
+    This is the primary entry point for incoming messages from leads.
+    
+    Flow:
+    1. Extract message and context from payload
+    2. Run through agent orchestrator (LLM generates response)
+    3. Determine final action (prefer LLM, fallback to safety rules)
+    4. Decide whether to send message (no-send for fees/links/pricing)
+    5. Log escalations to MongoDB
+    6. Return response with flags
+    
+    Payload:
+        {
+            "thread_id": "unique_conversation_id",
+            "text": "Lead's message",
+            "chat_history": [{"role": "user"|"assistant", "content": "..."}],
+            "stage": "qualifying|working|touring|...",
+            "lead_profile": {"budget": 1500, ...}
+        }
+    
+    Returns:
+        {
+            "message": "AI response text (empty if no-send)",
+            "state": {...},
+            "escalation": bool,
+            "escalation_type": "action_name",
+            "escalation_reason": "explanation",
+            "should_send_message": bool,
+            "stage_change": "new_stage" | null
+        }
+    """
+    # Extract payload components
     text = payload.get("text") or ""
     thread_id = payload.get("thread_id")
-    orchestrator = AgentOrchestrator()
-    chat_history = _build_chat_history(thread_id, (payload.get("chat_history") or []))
+    chat_history = _build_chat_history(thread_id, payload.get("chat_history"))
+    
+    # Build initial state
     state_in = payload.get("state") or {
         "thread_id": thread_id,
         "stage": payload.get("stage") or "qualifying",
         "chat_history": chat_history,
         "lead_profile": payload.get("lead_profile") or {},
     }
+    
+    # Run through agent orchestrator (classify stage -> retrieve -> respond)
+    orchestrator = AgentOrchestrator()
     next_state = orchestrator.run_turn(state_in, text)
+    
+    # Log request metrics
     try:
         import logging
         logger = logging.getLogger(__name__)
         logger.info(
-            "Zapier webhook: thread_id=%s text_len=%s history=%s reply_len=%s context_len=%s stage=%s",
+            "Zapier webhook: thread=%s text_len=%d history=%d reply_len=%d stage=%s",
             thread_id,
-            len(text or ""),
-            len(chat_history or []),
-            len((next_state.get("reply") or "")),
-            len((next_state.get("context") or "")),
+            len(text),
+            len(chat_history),
+            len(next_state.get("reply") or ""),
             next_state.get("stage"),
         )
     except Exception:
         pass
-    stage_change = should_change_stage(next_state.get("suggested_action"))
-    escalate = (next_state.get("suggested_action") or {}).get("action") == "escalate_pricing"
-    # Return updated chat history including this turn
-    reply_text = next_state.get("reply") or ""
-    updated_history = (chat_history or []) + ([{"role": "user", "content": text}] if text else []) + (
-        [{"role": "assistant", "content": reply_text}] if reply_text else []
+    
+    # Determine final action: prefer LLM suggestion, fallback to safety rules
+    model_suggested = next_state.get("suggested_action") or {}
+    final_action = model_suggested
+    action_type = (final_action.get("action") if isinstance(final_action, dict) else None) or None
+    
+    # Apply safety rule fallback if LLM didn't provide action
+    if not action_type:
+        fallback = detect_escalation_from_rules(
+            user_text=text,
+            chat_history=chat_history,
+            stage=next_state.get("stage"),
+            reply_text=next_state.get("reply") or "",
+        )
+        if isinstance(fallback, dict) and fallback.get("action"):
+            final_action = {"action": fallback.get("action"), "reason": fallback.get("reason")}
+            action_type = final_action.get("action")
+    
+    # Determine flags
+    stage_change = should_change_stage(final_action)
+    escalate = is_escalation_action(action_type)
+    escalation_type = action_type if escalate else None
+    escalation_reason = (
+        (final_action.get("reason") if isinstance(final_action, dict) else None)
+        if escalate else None
     )
+    
+    # Decide whether to send message (no-send for fees/links/pricing)
+    should_send_message = determine_should_send(action_type, str(next_state.get("stage") or ""))
+    
+    # Log escalation to MongoDB for human review queue
+    if escalate and thread_id:
+        reply_text = next_state.get("reply") or ""
+        _log_escalation(
+            thread_id=thread_id,
+            escalation_type=escalation_type,
+            escalation_reason=escalation_reason,
+            lead_message=text,
+            ai_response=reply_text,
+            stage=str(next_state.get("stage") or "unknown"),
+        )
+    
+    # Handle no-send cases and provide fallback if needed
+    reply_text = next_state.get("reply") or ""
+    
+    if should_send_message and not reply_text:
+        # LLM should have provided message; use minimal fallback
+        reply_text = default_reply_for_action(action_type, str(next_state.get("stage") or ""), text)
+        next_state["reply"] = reply_text
+    
+    # Build updated chat history
+    updated_history = (chat_history or []) + ([{"role": "user", "content": text}] if text else [])
+    
+    if should_send_message and reply_text:
+        updated_history += [{"role": "assistant", "content": reply_text}]
+    else:
+        # Blank the reply for no-send cases
+        next_state["reply"] = ""
+        reply_text = ""
+    
     next_state["chat_history"] = updated_history[-20:]
-    # special controls from LLM are represented via suggested_action in this version
+    
+    # Return response
     return {
-        "message": next_state.get("reply"),
+        "message": reply_text,
         "state": next_state,
         "stage_change": stage_change,
-        "no_response": False,
-        "escalate": escalate,
+        "escalation": bool(escalate),
+        "escalation_type": escalation_type,
+        "escalation_reason": escalation_reason,
+        "should_send_message": bool(should_send_message),
+        # Backward-compatible fields
+        "escalate": bool(escalate),
+        "no_response": not should_send_message,
     }
 
 
 @agent_router.post("/start")
 def start_conversation(payload: dict) -> dict:
+    """Initialize a new conversation thread.
+    
+    Creates initial state for a new lead conversation.
+    
+    Payload:
+        {
+            "thread_id": "unique_id",
+            "lead_profile": {"budget": 1500, "move_date": "2025-03", ...}
+        }
+    
+    Returns:
+        {"status": "started", "state": {...}}
+    """
     thread_id = payload.get("thread_id")
     lead_profile = payload.get("lead_profile") or {}
+    
     initial_state: AgentState = {
         "thread_id": thread_id,
-        "stage": "qualifying",  # StageV2 string for transport
+        "stage": "qualifying",
         "chat_history": payload.get("chat_history") or [],
         "lead_profile": lead_profile,
     }
+    
     return {"status": "started", "state": initial_state}
 
 
 @agent_router.post("/reply")
 def generate_reply(payload: dict) -> dict:
+    """Generate a reply in an ongoing conversation.
+    
+    Similar to zapier_message but also persists messages to MongoDB.
+    
+    Payload:
+        {
+            "thread_id": "unique_id",
+            "text": "Lead's message",
+            "chat_history": [...],
+            "state": {...}
+        }
+    
+    Returns:
+        {
+            "message": "AI response",
+            "state": {...},
+            "escalation": bool,
+            "should_send_message": bool
+        }
+    """
     user_input = payload.get("text") or ""
     thread_id = payload.get("thread_id")
-    orchestrator = AgentOrchestrator()
-
-    chat_history = _build_chat_history(thread_id, (payload.get("chat_history") or []))
+    chat_history = _build_chat_history(thread_id, payload.get("chat_history"))
+    
+    # Build state
     state_in: AgentState = payload.get("state") or {
         "thread_id": thread_id,
         "stage": "qualifying",
         "chat_history": chat_history,
         "lead_profile": payload.get("lead_profile") or {},
     }
+    
+    # Run through agent
+    orchestrator = AgentOrchestrator()
     next_state = orchestrator.run_turn(state_in, user_input)
     reply = next_state.get("reply") or ""
-
-    # Persist assistant message
-    if thread_id and reply:
+    
+    # Determine final action
+    model_suggested = next_state.get("suggested_action") or {}
+    final_action = model_suggested
+    action_type = (final_action.get("action") if isinstance(final_action, dict) else None) or None
+    
+    if not action_type:
+        fallback = detect_escalation_from_rules(
+            user_text=user_input,
+            chat_history=chat_history,
+            stage=next_state.get("stage"),
+            reply_text=reply,
+        )
+        if isinstance(fallback, dict) and fallback.get("action"):
+            final_action = {"action": fallback.get("action"), "reason": fallback.get("reason")}
+            action_type = final_action.get("action")
+    
+    # Determine flags
+    stage_change = should_change_stage(final_action)
+    escalate = is_escalation_action(action_type)
+    escalation_type = action_type if escalate else None
+    escalation_reason = (
+        (final_action.get("reason") if isinstance(final_action, dict) else None)
+        if escalate else None
+    )
+    should_send_message = determine_should_send(action_type, str(next_state.get("stage") or ""))
+    
+    # Persist assistant message to DB if sending
+    if thread_id and reply and should_send_message:
         count = messages_collection().count_documents({"thread_id": thread_id})
         inserted = messages_collection().insert_one({
             "thread_id": thread_id,
@@ -138,36 +385,79 @@ def generate_reply(payload: dict) -> dict:
             "source": "generated",
             "pii_hashes": {},
         })
-        # Best-effort: embed the generated reply immediately so it becomes retrievable
+        
+        # Generate embedding asynchronously
         try:
-            EmbeddingsService().embed_and_update_messages([(inserted.inserted_id, reply)], version="v1")
+            EmbeddingsService().embed_and_update_messages(
+                [(inserted.inserted_id, reply)],
+                version="v1"
+            )
         except Exception:
-            # Fail silently; background jobs can re-embed later
             pass
-
-    # Optional: suggest action and stage change
-    stage_change = should_change_stage(next_state.get("suggested_action"))
-
-    escalate = (next_state.get("suggested_action") or {}).get("action") == "escalate_pricing"
-    # Return updated chat history including this turn
-    updated_history = (chat_history or []) + ([{"role": "user", "content": user_input}] if user_input else []) + (
-        [{"role": "assistant", "content": reply}] if reply else []
-    )
+    
+    # Log escalation
+    if escalate and thread_id:
+        _log_escalation(
+            thread_id=thread_id,
+            escalation_type=escalation_type,
+            escalation_reason=escalation_reason,
+            lead_message=user_input,
+            ai_response=reply if should_send_message else "",
+            stage=str(next_state.get("stage") or "unknown"),
+        )
+    
+    # Build response
+    updated_history = (chat_history or []) + ([{"role": "user", "content": user_input}] if user_input else [])
+    
+    if should_send_message and reply:
+        updated_history += [{"role": "assistant", "content": reply}]
+    else:
+        next_state["reply"] = ""
+        reply = ""
+    
     next_state["chat_history"] = updated_history[-20:]
-
-    return {"message": reply, "state": next_state, "stage_change": stage_change, "escalate": escalate}
+    
+    return {
+        "message": reply,
+        "state": next_state,
+        "stage_change": stage_change,
+        "escalation": bool(escalate),
+        "escalation_type": escalation_type,
+        "escalation_reason": escalation_reason,
+        "should_send_message": bool(should_send_message),
+        # Backward-compatible fields
+        "escalate": bool(escalate),
+    }
 
 
 @agent_router.post("/action")
 def confirm_action(payload: dict) -> dict:
+    """Execute an action through Composio (email, SMS, calendar, etc.).
+    
+    Payload:
+        {
+            "action": "request_application",
+            "meta": {"recipient": "lead@example.com", "property": "The Pearl", ...}
+        }
+    
+    Returns:
+        {"status": "success"|"error", "result": {...}}
+    """
     client = ComposioClient()
     action = payload.get("action")
     meta = payload.get("meta") or {}
+    
+    # Map action to Composio tool
     tool_map = {
         "request_application": "email.send",
     }
     tool = tool_map.get(action or "") or "email.send"
+    
     result = client.execute(tool, meta)
-    return {"status": result.get("status"), "provider": result.get("provider"), "action": action, "result": result}
-
-
+    
+    return {
+        "status": result.get("status"),
+        "provider": result.get("provider"),
+        "action": action,
+        "result": result
+    }

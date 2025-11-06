@@ -19,7 +19,7 @@ class RAGService:
     def retrieve(
         self,
         query: str,
-        top_k: int = 10,
+        top_k: int = 5,
         *,
         thread_id: Optional[str] = None,
         stage: Optional[str] = None,
@@ -164,8 +164,9 @@ class RAGService:
                     "index": "default",
                     "path": "embedding",
                     "queryVector": query_embedding,
-                    "numCandidates": max(top_k * 10, 200),
-                    "limit": max(top_k, 60),
+                    # Reduce candidate pool and internal limit to speed up
+                    "numCandidates": max(top_k * 8, 100),
+                    "limit": max(top_k, 40),
                 }
             },
         ]

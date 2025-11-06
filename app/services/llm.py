@@ -20,7 +20,7 @@ class LLMService:
     def __init__(self) -> None:
         settings = get_settings()
         self.client = OpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
-        self.model = "gpt-4o-mini"
+        self.model = "gpt-4.1"
 
     def generate(self, user_input: str, context: str = "") -> str:
         if not self.client:
@@ -31,7 +31,6 @@ class LLMService:
                 {"role": "system", "content": SYSTEM_PROMPT + ("\n" + context if context else "")},
                 {"role": "user", "content": user_input},
             ],
-            temperature=0.4,
         )
         return resp.choices[0].message.content or ""
 

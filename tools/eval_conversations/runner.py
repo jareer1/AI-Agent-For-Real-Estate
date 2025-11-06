@@ -19,7 +19,7 @@ def _iter_sample(items: List[TestItem], limit: Optional[int]) -> Iterable[TestIt
     return items[:limit]
 
 
-def call_zapier(endpoint: str, item: TestItem, timeout: float = 30.0) -> str:
+def call_zapier(endpoint: str, item: TestItem, timeout: float = 75.0) -> dict:
     # Payload aligned with our FastAPI webhook: /api/webhook/zapier/message
     payload = {
         "thread_id": item.thread_id,
@@ -30,15 +30,34 @@ def call_zapier(endpoint: str, item: TestItem, timeout: float = 30.0) -> str:
         resp = client.post(endpoint, json=payload)
         resp.raise_for_status()
         data = resp.json()
-        # Accept our API shape {message: "..."} or generic {response: "..."}
+        # Normalize to a dict with keys we need for evaluation output
+        result: dict = {
+            "message": "",
+            "escalation": False,
+            "should_send_message": True,
+        }
         if isinstance(data, dict):
             if "message" in data:
-                return str(data["message"]) or ""
-            if "response" in data:
-                return str(data["response"]) or ""
+                result["message"] = str(data.get("message") or "")
+            elif "response" in data:
+                result["message"] = str(data.get("response") or "")
+            # pick up new fields if present
+            if "escalation" in data:
+                result["escalation"] = bool(data.get("escalation"))
+            elif "escalate" in data:
+                result["escalation"] = bool(data.get("escalate"))
+            if "should_send_message" in data:
+                result["should_send_message"] = bool(data.get("should_send_message"))
+            elif "no_response" in data:
+                # historic field: no_response True means should_send False
+                result["should_send_message"] = not bool(data.get("no_response"))
+            return result
+        # Fallbacks
         if isinstance(data, str):
-            return data
-        return json.dumps(data)
+            result["message"] = data
+            return result
+        result["message"] = json.dumps(data)
+        return result
 
 
 def run_eval(
@@ -51,22 +70,26 @@ def run_eval(
     results = []
     for item in _iter_sample(items, limit):
         try:
-            prediction = call_zapier(endpoint, item)
+            api_result = call_zapier(endpoint, item)
+            prediction = api_result.get("message", "")
         except Exception as e:
             prediction = f"__ERROR__: {e}"
         scores = score_item(prediction, item.target_agent)
         rid = stable_id([str(item.thread_id), str(item.turn_id), item.lead[:64]])
-        results.append(
-            {
-                "id": rid,
-                "thread_id": item.thread_id,
-                "turn_id": item.turn_id,
-                "lead": item.lead,
-                "target_agent": item.target_agent,
-                "prediction": prediction,
-                "scores": scores,
-            }
-        )
+        row = {
+            "id": rid,
+            "thread_id": item.thread_id,
+            "turn_id": item.turn_id,
+            "lead": item.lead,
+            "target_agent": item.target_agent,
+            "prediction": prediction,
+            "scores": scores,
+        }
+        # Attach top-level evaluation fields if we have them
+        if isinstance(locals().get("api_result"), dict):
+            row["escalation"] = bool(api_result.get("escalation", False))
+            row["should_send_message"] = bool(api_result.get("should_send_message", True))
+        results.append(row)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8") as f:
         for row in results:

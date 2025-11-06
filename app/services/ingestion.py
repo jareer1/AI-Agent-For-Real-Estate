@@ -56,7 +56,7 @@ def _redact_pii(text: str) -> tuple[str, dict[str, str]]:
 
 
 def _infer_stage(text: str) -> Stage:
-    lower = text.lower()
+    lower = text.lower(                      )
     if any(k in lower for k in ["apply", "application"]):
         return Stage.applying
     if any(k in lower for k in ["approved", "approval"]):
