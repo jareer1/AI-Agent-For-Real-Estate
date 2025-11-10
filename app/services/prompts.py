@@ -367,10 +367,9 @@ def get_guardrails_prompt() -> str:
    - Any fee-related questions
    - Response: DO NOT send a message (empty outgoing_message)
 
-3. **Specific Property Pricing** → Always escalate_pricing, do not send message
-   - "How much is The Pearl?"
-   - "What's the rent at Harlow?"
-   - "Any specials at [property name]?"
+3. **Specific Property Pricing/Areas/Specials (for a named property)** → Always escalate_pricing, do not send message
+   - "How much is The Pearl?" / "What areas are available at Harlow?" / "Any specials at [property name]?"
+   - Any info AI wouldn’t know without the property website (rates, specials, availability details)
    - Response: DO NOT send a message (empty outgoing_message)
 
 4. **Scheduling Tours** → Always escalate_scheduling, DO send message
@@ -401,6 +400,14 @@ def get_guardrails_prompt() -> str:
    - Service problems
    - Complaints after moving in
    - Response: DO NOT send message if post-move (empty outgoing_message)
+
+10. **Cold Lead (no response after three follow-ups)** → escalate_followup, DO send message
+    - Detected when there are 3+ consecutive assistant messages with no new user text
+    - Response: Brief, warm check-in that advances the conversation (no pressure)
+
+11. **No Available Information to Answer** → escalate_general, DO send message
+    - If you lack sufficient info in chat history and retrieved context to answer
+    - Response: "I'll check on that and follow up shortly."
 
 **Quote Validity:**
 - If asked about quote validity: "The quote was for 48 hours from our tour."

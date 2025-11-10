@@ -65,14 +65,14 @@ class AgentGraph:
         # Initialize LLM
         if settings.openai_api_key:
             self.llm = ChatOpenAI(
-                model="gpt-5",
-                temperature=1.0,  # GPT-5 only supports temperature=1.0
+                model="gpt-4.1",
+                temperature=0.5, 
                 api_key=settings.openai_api_key,
                 max_retries=1,
                 timeout=50,
                 model_kwargs={"response_format": {"type": "json_object"}},
             )
-            self._model_name = "gpt-5"
+            self._model_name = "gpt-4.1"
         else:
             # Fallback for testing
             from .llm import LLMService
@@ -429,18 +429,7 @@ Return JSON:
         chat_history: list[dict[str, str]],
     ) -> str:
         """Simple fallback when LLM fails."""
-        lower = (user_utterance or "").lower()
-        
-        if any(k in lower for k in ["approved", "approval"]):
-            return "Awesome! Congratulations! Can you ask them for the locator referral form?"
-        
-        if any(k in lower for k in ["applied", "application"]):
-            return "Great! Please list me as your locator (Ashanti, AptAmigo) and text once you submit."
-        
-        if any(k in lower for k in ["tour", "schedule", "visit"]):
-            return "I'll check availability and follow up with times."
-        
-        return "I'll look into that and follow up shortly."
+        return "I'll check on that and follow up shortly."
     
     def _format_recent_history(self, history: list[dict[str, str]]) -> str:
         """Format recent chat history for stage classification."""
@@ -451,7 +440,7 @@ Return JSON:
             if role == "user":
                 lines.append(f"Lead: {content}")
             elif role == "assistant":
-                lines.append(f"Ashanti: {content}")
+                lines.append(f"Assistant: {content}")
         return "\n".join(lines) if lines else "(no history)"
     
     # ========================================

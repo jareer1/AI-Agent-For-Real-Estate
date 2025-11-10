@@ -98,7 +98,7 @@ class StyleProfile:
                 return ""
             bullets = "\n- ".join(notes)
             return (
-                "ASHANTI STYLE NOTES (tone only):\n"
+                "STYLE NOTES (tone only):\n"
                 f"- {bullets}"
             )
         except Exception:
