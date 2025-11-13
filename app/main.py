@@ -27,3 +27,8 @@ def create_app() -> FastAPI:
 app = create_app()
 
 
+# In app/main.py, add:
+
+@app.get("/")
+async def root():
+    return {"status": "ok", "message": "Real Estate AI Agent API is running"}
