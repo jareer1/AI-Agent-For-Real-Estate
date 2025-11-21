@@ -441,6 +441,8 @@ Return JSON:
                 lines.append(f"Lead: {content}")
             elif role == "assistant":
                 lines.append(f"Assistant: {content}")
+            elif role == "system":
+                lines.append(f"Human Agent: {content}")
         return "\n".join(lines) if lines else "(no history)"
     
     # ========================================

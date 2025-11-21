@@ -15,6 +15,7 @@ class Channel(str, Enum):
 class Role(str, Enum):
     agent = "agent"
     lead = "lead"
+    system = "system"
 
 
 class Stage(str, Enum):

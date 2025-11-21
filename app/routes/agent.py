@@ -77,14 +77,16 @@ def _build_chat_history(
         for doc in cursor:
             role = (doc.get("role") or "").lower()
             content = doc.get("clean_text") or ""
-            
+
             if not content:
                 continue
-            
+
             if role == "lead":
                 mapped.append({"role": "user", "content": content})
             elif role == "agent":
                 mapped.append({"role": "assistant", "content": content})
+            elif role == "system":
+                mapped.append({"role": "system", "content": content})
         
         return mapped[-20:]
     
@@ -430,31 +432,119 @@ def generate_reply(payload: dict) -> dict:
     }
 
 
+@agent_router.post("/send_system_message")
+def send_system_message(payload: dict) -> dict:
+    """Send a message from a system agent in response to an escalation.
+
+    This endpoint allows system agents to send messages that will be properly
+    identified as coming from system agents rather than the AI assistant.
+
+    Payload:
+        {
+            "thread_id": "unique_conversation_id",
+            "message": "System agent's response message",
+            "escalation_id": "optional_id_of_resolved_escalation"
+        }
+
+    Returns:
+        {"status": "sent", "message_id": "..."}
+    """
+    thread_id = payload.get("thread_id")
+    message = payload.get("message", "").strip()
+    escalation_id = payload.get("escalation_id")
+
+    if not thread_id or not message:
+        return {"status": "error", "message": "thread_id and message are required"}
+
+    try:
+        # Build chat history (this will include the system message we're about to add)
+        chat_history = _build_chat_history(thread_id, None)
+
+        # Add the system message to chat history
+        system_message = {"role": "system", "content": message}
+        updated_history = (chat_history or []) + [system_message]
+
+        # Store the system message in the database
+        count = messages_collection().count_documents({"thread_id": thread_id})
+        inserted = messages_collection().insert_one({
+            "thread_id": thread_id,
+            "turn_index": count,
+            "role": "system",  # Use system role instead of agent
+            "text": message,
+            "clean_text": message,
+            "timestamp": datetime.utcnow(),
+            "stage": "unknown",  # We'll determine this from context
+            "entities": {},
+            "embedding": None,
+            "embedding_model": None,
+            "embedding_version": None,
+            "source": "system_agent",
+            "pii_hashes": {},
+            "escalation_id": escalation_id,  # Link to the escalation this resolves
+        })
+
+        # Generate embedding asynchronously
+        try:
+            EmbeddingsService().embed_and_update_messages(
+                [(inserted.inserted_id, message)],
+                version="v1"
+            )
+        except Exception:
+            pass
+
+        # Mark escalation as resolved if escalation_id provided
+        if escalation_id:
+            try:
+                escalations_collection().update_one(
+                    {"_id": escalation_id},
+                    {
+                        "$set": {
+                            "resolved": True,
+                            "resolution_notes": f"System message sent: {message[:100]}...",
+                            "resolved_at": datetime.utcnow(),
+                            "resolved_by": "system_agent"
+                        }
+                    }
+                )
+            except Exception as e:
+                logging.getLogger(__name__).warning(f"Failed to update escalation {escalation_id}: {e}")
+
+        return {
+            "status": "sent",
+            "message_id": str(inserted.inserted_id),
+            "escalation_resolved": bool(escalation_id)
+        }
+
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Failed to send system message: {e}")
+        return {"status": "error", "message": str(e)}
+
+
 @agent_router.post("/action")
 def confirm_action(payload: dict) -> dict:
     """Execute an action through Composio (email, SMS, calendar, etc.).
-    
+
     Payload:
         {
             "action": "request_application",
             "meta": {"recipient": "lead@example.com", "property": "The Pearl", ...}
         }
-    
+
     Returns:
         {"status": "success"|"error", "result": {...}}
     """
     client = ComposioClient()
     action = payload.get("action")
     meta = payload.get("meta") or {}
-    
+
     # Map action to Composio tool
     tool_map = {
         "request_application": "email.send",
     }
     tool = tool_map.get(action or "") or "email.send"
-    
+
     result = client.execute(tool, meta)
-    
+
     return {
         "status": result.get("status"),
         "provider": result.get("provider"),
