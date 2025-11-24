@@ -154,7 +154,7 @@ def zapier_message(payload: dict) -> dict:
             "text": "Lead's message",
             "chat_history": [{"role": "user"|"assistant", "content": "..."}],
             "stage": "qualifying|working|touring|...",
-            "lead_profile": {"budget": 1500, ...}
+            "lead_profile": {"budget": 1500, "bedrooms": "2+", ...}
         }
     
     Returns:
@@ -285,7 +285,7 @@ def start_conversation(payload: dict) -> dict:
     Payload:
         {
             "thread_id": "unique_id",
-            "lead_profile": {"budget": 1500, "move_date": "2025-03", ...}
+            "lead_profile": {"budget": 1500, "bedrooms": "2+", "move_date": "2025-03", ...}
         }
     
     Returns:
@@ -315,7 +315,8 @@ def generate_reply(payload: dict) -> dict:
             "thread_id": "unique_id",
             "text": "Lead's message",
             "chat_history": [...],
-            "state": {...}
+            "state": {...},
+            "lead_profile": {"budget": 1500, "bedrooms": "2+", ...}
         }
     
     Returns:
