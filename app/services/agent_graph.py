@@ -216,9 +216,10 @@ Return JSON:
         context = state.get("context") or ""
         user_utterance = state.get("user_utterance") or ""
         chat_history = state.get("chat_history") or []
+        lead_profile = state.get("lead_profile") or {}
         
-        # Extract lead context
-        lead_summary = self._extract_lead_context(context, chat_history)
+        # Extract lead context (prioritizes explicit lead_profile data)
+        lead_summary = self._extract_lead_context(context, chat_history, lead_profile)
         
         # Build comprehensive prompt
         stage_str = stage.value if hasattr(stage, "value") else str(stage)
@@ -239,16 +240,40 @@ Return JSON:
         # Build messages array
         messages = [{"role": "system", "content": system_prompt}]
         
-        # Add recent chat history
+        # Check for system instruction in chat history (e.g., follow-up requests)
+        system_instruction = None
+        filtered_history = []
         for msg in chat_history[-12:]:
-            if msg.get("role") in ("user", "assistant", "system"):
-                messages.append({
-                    "role": msg["role"],
-                    "content": msg.get("content") or ""
-                })
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if role == "system" and any(kw in content.lower() for kw in [
+                "follow-up", "follow up", "followup", "write a message", 
+                "generate", "send a message", "re-engage", "check in"
+            ]):
+                # This is a system instruction for proactive messaging
+                system_instruction = content
+            elif role in ("user", "assistant", "system"):
+                filtered_history.append({"role": role, "content": content})
         
-        # Add current user message
-        messages.append({"role": "user", "content": user_utterance})
+        # Add filtered chat history
+        for msg in filtered_history:
+            messages.append(msg)
+        
+        # Handle system instruction (proactive message generation)
+        if system_instruction:
+            # Build context about lead profile for proactive message
+            profile_summary = self._build_profile_summary(lead_profile)
+            instruction_prompt = f"""SYSTEM INSTRUCTION: {system_instruction}
+
+{profile_summary}
+
+Generate a natural, personalized message based on this instruction and the lead's profile.
+The message should be relevant to their search criteria and stage in the process.
+Keep it warm, brief, and action-oriented."""
+            messages.append({"role": "user", "content": instruction_prompt})
+        else:
+            # Add current user message (normal flow)
+            messages.append({"role": "user", "content": user_utterance})
         
         # Generate response
         reply, suggested_action = self._generate_response(messages, user_utterance, chat_history)
@@ -269,88 +294,199 @@ Return JSON:
         self,
         context: str,
         chat_history: list[dict[str, str]],
+        lead_profile: dict[str, Any] | None = None,
     ) -> str:
-        """Extract known information about the lead from context and history."""
+        """Extract known information about the lead from lead_profile, context, and history.
+        
+        Priority: lead_profile (explicit) > text extraction from context/history
+        """
         try:
-            # Combine context and recent history
+            # Start with explicit lead_profile data (highest priority)
+            known = {}
+            lead_profile = lead_profile or {}
+            
+            # Extract from lead_profile first (explicit data from Zapier/CRM)
+            if lead_profile.get("budget"):
+                budget = lead_profile["budget"]
+                known["budget"] = f"${budget}" if isinstance(budget, (int, float)) else str(budget)
+            
+            if lead_profile.get("bedrooms"):
+                bedrooms = lead_profile["bedrooms"]
+                known["bedrooms"] = f"{bedrooms}br" if isinstance(bedrooms, int) else str(bedrooms)
+            
+            if lead_profile.get("move_date"):
+                known["move_timing"] = str(lead_profile["move_date"])
+            elif lead_profile.get("move_in_date"):
+                known["move_timing"] = str(lead_profile["move_in_date"])
+            
+            if lead_profile.get("preferred_neighborhood"):
+                known["areas"] = str(lead_profile["preferred_neighborhood"])
+            elif lead_profile.get("preferred_areas"):
+                areas = lead_profile["preferred_areas"]
+                known["areas"] = ", ".join(areas) if isinstance(areas, list) else str(areas)
+            elif lead_profile.get("areas"):
+                areas = lead_profile["areas"]
+                known["areas"] = ", ".join(areas) if isinstance(areas, list) else str(areas)
+            
+            # Include any other relevant profile fields
+            if lead_profile.get("pets"):
+                known["pets"] = str(lead_profile["pets"])
+            if lead_profile.get("bathrooms"):
+                known["bathrooms"] = str(lead_profile["bathrooms"])
+            if lead_profile.get("name"):
+                known["name"] = str(lead_profile["name"])
+            
+            # Combine context and recent history for fallback extraction
             combined_text = context + " " + " ".join([
                 m.get("content", "") for m in chat_history[-10:]
             ])
             lower = combined_text.lower()
             
-            known = {}
             missing = []
             
-            # Check for budget
+            # Only extract from text if not already in lead_profile
             import re
-            dollar_matches = re.findall(r'\$\s*(\d{3,4})', combined_text)
-            if dollar_matches:
-                known["budget"] = f"${dollar_matches[0]}"
-            elif any(k in lower for k in ["budget", "afford", "price range"]):
-                known["budget"] = "mentioned"
-            else:
-                missing.append("budget")
             
-            # Check for move timing
-            months = ["january", "february", "march", "april", "may", "june", 
-                     "july", "august", "september", "october", "november", "december",
-                     "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
-            move_found = False
-            for month in months:
-                if month in lower:
-                    known["move_timing"] = month.title()
-                    move_found = True
-                    break
-            
-            if not move_found:
-                if any(k in lower for k in ["move", "moving", "asap", "soon"]):
-                    known["move_timing"] = "mentioned"
+            if "budget" not in known:
+                dollar_matches = re.findall(r'\$\s*(\d{3,4})', combined_text)
+                if dollar_matches:
+                    known["budget"] = f"${dollar_matches[0]}"
+                elif any(k in lower for k in ["budget", "afford", "price range"]):
+                    known["budget"] = "mentioned"
                 else:
-                    missing.append("move_timing")
+                    missing.append("budget")
             
-            # Check for bedrooms
-            if any(k in lower for k in ["studio", "efficiency"]):
-                known["bedrooms"] = "studio"
-            elif any(k in lower for k in ["1 bed", "1bed", "1br", "one bed"]):
-                known["bedrooms"] = "1br"
-            elif any(k in lower for k in ["2 bed", "2bed", "2br", "two bed"]):
-                known["bedrooms"] = "2br"
-            elif any(k in lower for k in ["3 bed", "3bed", "3br", "three bed"]):
-                known["bedrooms"] = "3br"
-            elif "bedroom" in lower or "bed" in lower:
-                known["bedrooms"] = "mentioned"
-            else:
-                missing.append("bedrooms")
+            if "move_timing" not in known:
+                months = ["january", "february", "march", "april", "may", "june", 
+                         "july", "august", "september", "october", "november", "december",
+                         "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+                move_found = False
+                for month in months:
+                    if month in lower:
+                        known["move_timing"] = month.title()
+                        move_found = True
+                        break
+                
+                if not move_found:
+                    if any(k in lower for k in ["move", "moving", "asap", "soon"]):
+                        known["move_timing"] = "mentioned"
+                    else:
+                        missing.append("move_timing")
             
-            # Check for areas
-            areas_found = []
-            area_keywords = {
-                "heights": "Heights", "downtown": "Downtown", "midtown": "Midtown",
-                "uptown": "Uptown", "galleria": "Galleria", "katy": "Katy",
-                "spring": "Spring", "pearland": "Pearland", "sugar land": "Sugar Land",
-            }
-            for keyword, area_name in area_keywords.items():
-                if keyword in lower:
-                    areas_found.append(area_name)
+            if "bedrooms" not in known:
+                if any(k in lower for k in ["studio", "efficiency"]):
+                    known["bedrooms"] = "studio"
+                elif any(k in lower for k in ["1 bed", "1bed", "1br", "one bed"]):
+                    known["bedrooms"] = "1br"
+                elif any(k in lower for k in ["2 bed", "2bed", "2br", "two bed"]):
+                    known["bedrooms"] = "2br"
+                elif any(k in lower for k in ["3 bed", "3bed", "3br", "three bed"]):
+                    known["bedrooms"] = "3br"
+                elif "bedroom" in lower or "bed" in lower:
+                    known["bedrooms"] = "mentioned"
+                else:
+                    missing.append("bedrooms")
             
-            if areas_found:
-                known["areas"] = ", ".join(areas_found[:3])
+            if "areas" not in known:
+                areas_found = []
+                area_keywords = {
+                    "heights": "Heights", "downtown": "Downtown", "midtown": "Midtown",
+                    "uptown": "Uptown", "galleria": "Galleria", "katy": "Katy",
+                    "spring": "Spring", "pearland": "Pearland", "sugar land": "Sugar Land",
+                }
+                for keyword, area_name in area_keywords.items():
+                    if keyword in lower:
+                        areas_found.append(area_name)
+                
+                if areas_found:
+                    known["areas"] = ", ".join(areas_found[:3])
             
-            # Build summary
+            # Build summary with strong emphasis on NOT re-asking known info
             if known or missing:
-                known_items = [f"{k}: {v}" for k, v in known.items()]
-                summary = "LEAD CONTEXT SUMMARY:\n"
-                if known_items:
-                    summary += f"Known: {', '.join(known_items)}\n"
+                summary = "\n" + "=" * 60 + "\n"
+                summary += "🚨 MANDATORY: READ THIS BEFORE RESPONDING 🚨\n"
+                summary += "=" * 60 + "\n\n"
+                
+                if known:
+                    summary += "YOU ALREADY HAVE THIS INFORMATION FROM THE CRM:\n"
+                    for k, v in known.items():
+                        label = k.replace("_", " ").title()
+                        summary += f"  • {label}: {v}\n"
+                    summary += "\n"
+                    
+                    # Create explicit prohibition list
+                    prohibitions = []
+                    if "budget" in known:
+                        prohibitions.append("budget/price range/afford")
+                    if "bedrooms" in known:
+                        prohibitions.append("bedrooms/beds")
+                    if "move_timing" in known:
+                        prohibitions.append("move-in date/when moving/timeline")
+                    if "areas" in known:
+                        prohibitions.append("area/neighborhood/location")
+                    
+                    if prohibitions:
+                        summary += "🚫 DO NOT ASK ABOUT: " + ", ".join(prohibitions) + "\n\n"
+                
                 if missing:
-                    summary += f"Still need: {', '.join(missing[:2])}\n"
-                summary += "→ Don't re-ask known info. Ask for ONE missing item naturally."
+                    summary += f"✅ YOU MAY ASK ABOUT: {', '.join(missing[:2])}\n\n"
+                else:
+                    summary += "✅ ALL QUALIFYING INFO COLLECTED!\n"
+                    summary += "→ Acknowledge their search (3br, $3000, Downtown, Dec 1)\n"
+                    summary += "→ Offer to send options OR ask about extras (pets, parking, amenities)\n\n"
+                
+                summary += "CORRECT RESPONSE EXAMPLES:\n"
+                summary += "- \"Perfect, I have everything I need. I'll pull some 3br options in Downtown and send them over.\"\n"
+                summary += "- \"Got it! Before I send options, any pets or parking needs?\"\n"
+                summary += "- \"Great! I'll put together some options in your range and send them shortly.\"\n\n"
+                
+                summary += "WRONG (DO NOT SAY):\n"
+                summary += "- \"What's your budget?\" ← WRONG, you already know it's $3000\n"
+                summary += "- \"When are you looking to move?\" ← WRONG, you already know Dec 1\n"
+                summary += "- \"Any preferred areas?\" ← WRONG, you already know Downtown\n"
+                summary += "=" * 60 + "\n"
                 return summary
         
         except Exception as e:
             self.logger.warning(f"Failed to extract lead context: {e}")
         
         return ""
+    
+    def _build_profile_summary(self, lead_profile: dict[str, Any] | None) -> str:
+        """Build a clear summary of the lead profile for proactive messaging."""
+        if not lead_profile:
+            return "No lead profile data available."
+        
+        lines = ["LEAD PROFILE:"]
+        
+        field_labels = {
+            "budget": "Budget",
+            "bedrooms": "Bedrooms",
+            "bathrooms": "Bathrooms",
+            "move_date": "Move-in date",
+            "move_in_date": "Move-in date",
+            "preferred_neighborhood": "Preferred area",
+            "preferred_areas": "Preferred areas",
+            "areas": "Areas",
+            "pets": "Pets",
+            "name": "Name",
+            "email": "Email",
+            "phone": "Phone",
+        }
+        
+        for key, label in field_labels.items():
+            value = lead_profile.get(key)
+            if value:
+                if key == "budget" and isinstance(value, (int, float)):
+                    lines.append(f"- {label}: ${value}")
+                elif key == "bedrooms" and isinstance(value, int):
+                    lines.append(f"- {label}: {value}br")
+                elif isinstance(value, list):
+                    lines.append(f"- {label}: {', '.join(str(v) for v in value)}")
+                else:
+                    lines.append(f"- {label}: {value}")
+        
+        return "\n".join(lines) if len(lines) > 1 else "No specific lead profile data."
     
     def _generate_response(
         self,

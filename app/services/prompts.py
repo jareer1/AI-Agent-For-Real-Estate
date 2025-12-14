@@ -472,10 +472,15 @@ def build_complete_prompt(stage: str = "qualifying", lead_context: str = "", ret
     stage_specific = get_stage_prompt(stage)
     guardrails = get_guardrails_prompt()
     
-    prompt = base + "\n" + stage_specific + "\n" + guardrails
+    # Start with base prompt
+    prompt = base + "\n" + stage_specific
     
+    # Add lead context BEFORE guardrails for prominence (critical info)
     if lead_context:
-        prompt += f"\n\n## LEAD CONTEXT\n{lead_context}"
+        prompt += f"\n\n## LEAD CONTEXT (READ THIS FIRST - CRITICAL)\n{lead_context}"
+    
+    # Add guardrails after lead context
+    prompt += "\n" + guardrails
     
     if retrieved_context:
         prompt += f"\n\n## RETRIEVED CONTEXT (Similar Past Conversations - for tone/style reference only)\n{retrieved_context}"

@@ -157,6 +157,17 @@ def zapier_message(payload: dict) -> dict:
             "lead_profile": {"budget": 1500, "bedrooms": "2+", ...}
         }
     
+    System Instruction Mode (role="system"):
+        {
+            "role": "system",
+            "text": "Write a follow-up message after a long period of inactivity.",
+            "chat_history": [...],
+            "stage": "qualifying",
+            "lead_profile": {"budget": 3000, "bedrooms": 3, ...}
+        }
+        When role="system", the text is treated as an instruction for the agent
+        to generate a message (e.g., follow-up) using the provided lead_profile.
+    
     Returns:
         {
             "message": "AI response text (empty if no-send)",
@@ -168,10 +179,22 @@ def zapier_message(payload: dict) -> dict:
             "stage_change": "new_stage" | null
         }
     """
+    # Check if this is a system instruction (e.g., follow-up request)
+    role = (payload.get("role") or "").lower()
+    is_system_instruction = role == "system"
+    
     # Extract payload components
     text = payload.get("text") or ""
     thread_id = payload.get("thread_id")
     chat_history = _build_chat_history(thread_id, payload.get("chat_history"))
+    
+    # For system instructions, add the instruction to chat history as system message
+    # and use an empty user message (the agent should generate a proactive message)
+    if is_system_instruction and text:
+        # Add system instruction to the beginning of chat history for context
+        chat_history = [{"role": "system", "content": text}] + chat_history
+        # Use a placeholder to trigger response generation
+        text = "[System instruction: Generate response based on context and lead profile]"
     
     # Build initial state
     state_in = payload.get("state") or {
