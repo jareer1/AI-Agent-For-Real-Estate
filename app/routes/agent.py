@@ -24,6 +24,7 @@ from ..services.actions import (
 from ..services.escalation_rules import detect_escalation_from_rules
 from integrations.composio_client import ComposioClient
 from ..services.embeddings import EmbeddingsService
+from ..services.prompts import build_sms_prompt
 
 
 # API routers

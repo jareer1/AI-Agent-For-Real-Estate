@@ -5,10 +5,15 @@ __pycache__/
 *.pyc
 *.pyo
 .DS_Store
-.env
 dist/
 build/
 coverage.xml
 htmlcov/
 
 
+temp_auto_push.bat
+temp_interactive_push.bat
+.gitignore
+branch_structure.json
+config.bat
+node_modules
